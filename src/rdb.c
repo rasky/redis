@@ -624,6 +624,8 @@ int rdbSaveObjectType(rio *rdb, robj *o) {
             serverPanic("Unknown hash encoding");
     case OBJ_MODULE:
         return rdbSaveType(rdb,RDB_TYPE_MODULE);
+    case OBJ_BLOOM:
+        return rdbSaveType(rdb,RDB_TYPE_BLOOM);
     default:
         serverPanic("Unknown object type");
     }
@@ -775,6 +777,17 @@ ssize_t rdbSaveObject(rio *rdb, robj *o) {
             zfree(io.ctx);
         }
         return io.error ? -1 : (ssize_t)io.bytes;
+
+    } else if (o->type == OBJ_BLOOM) {
+        /* Save a bloom filter value */
+        if (o->encoding == OBJ_ENCODING_RAW) {
+            bloom *bf = (bloom*)o->ptr;
+            if (rdbSaveDoubleValue(rdb,bf->error) == -1) return -1;
+            if (rdbSaveLen(rdb,bf->numfilters) == -1) return -1;
+            // TODO....
+        } else {
+            serverPanic("Unknown bloom filter encoding");
+        }
     } else {
         serverPanic("Unknown object type");
     }

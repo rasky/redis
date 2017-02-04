@@ -239,6 +239,13 @@ robj *createModuleObject(moduleType *mt, void *value) {
     return createObject(OBJ_MODULE,mv);
 }
 
+robj *createBloomObject() {
+    bloom *bf = bloomNew();
+    robj *o = createObject(OBJ_BLOOM,bf);
+    o->encoding = OBJ_ENCODING_RAW;
+    return o;
+}
+
 void freeStringObject(robj *o) {
     if (o->encoding == OBJ_ENCODING_RAW) {
         sdsfree(o->ptr);
@@ -303,6 +310,18 @@ void freeModuleObject(robj *o) {
     zfree(mv);
 }
 
+void freeBloomObject(robj *o) {
+   switch (o->encoding) {
+    case OBJ_ENCODING_RAW:
+        bloomRelease(o->ptr);
+        break;
+    default:
+        serverPanic("Unknown bloom encoding type");
+        break;
+    }
+}
+
+
 void incrRefCount(robj *o) {
     if (o->refcount != OBJ_SHARED_REFCOUNT) o->refcount++;
 }
@@ -316,6 +335,7 @@ void decrRefCount(robj *o) {
         case OBJ_ZSET: freeZsetObject(o); break;
         case OBJ_HASH: freeHashObject(o); break;
         case OBJ_MODULE: freeModuleObject(o); break;
+        case OBJ_BLOOM: freeBloomObject(o); break;
         default: serverPanic("Unknown object type"); break;
         }
         zfree(o);

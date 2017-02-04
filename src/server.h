@@ -64,6 +64,7 @@ typedef long long mstime_t; /* millisecond time type. */
 #include "latency.h" /* Latency monitor API */
 #include "sparkline.h" /* ASCII graphs API */
 #include "quicklist.h"
+#include "bloom.h"   /* Bloom filter */
 
 /* Following includes allow test functions to be called from Redis main() */
 #include "zipmap.h"
@@ -449,6 +450,7 @@ typedef long long mstime_t; /* millisecond time type. */
 #define OBJ_SET 2
 #define OBJ_ZSET 3
 #define OBJ_HASH 4
+#define OBJ_BLOOM 6
 
 /* The "module" object type is a special one that signals that the object
  * is one directly managed by a Redis module. In this case the value points
@@ -462,6 +464,7 @@ typedef long long mstime_t; /* millisecond time type. */
  * in order to dispatch the loading to the right module, plus a 10 bits
  * encoding version. */
 #define OBJ_MODULE 5
+
 
 /* Extract encver / signature from a module type ID. */
 #define REDISMODULE_TYPE_ENCVER_BITS 10
@@ -1421,6 +1424,7 @@ robj *createHashObject(void);
 robj *createZsetObject(void);
 robj *createZsetZiplistObject(void);
 robj *createModuleObject(moduleType *mt, void *value);
+robj *createBloomObject(void);
 int getLongFromObjectOrReply(client *c, robj *o, long *target, const char *msg);
 int checkType(client *c, robj *o, int type);
 int getLongLongFromObjectOrReply(client *c, robj *o, long long *target, const char *msg);
@@ -1946,6 +1950,7 @@ void pfaddCommand(client *c);
 void pfcountCommand(client *c);
 void pfmergeCommand(client *c);
 void pfdebugCommand(client *c);
+void bfaddCommand(client *c);
 void latencyCommand(client *c);
 void moduleCommand(client *c);
 void securityWarningCommand(client *c);
