@@ -33,10 +33,19 @@
 #define __BLOOM_H
 #include <stdint.h>
 
+typedef struct filter {
+    struct filter *next;  /* next filter in chain */
+    uint64_t encoding;    /* encoding bitset: 1 bit per partition */
+    uint32_t k;           /* number of partitions */
+    uint32_t c;           /* number of items in this filter */
+    uint32_t m;           /* size of each partition in byte */
+    uint8_t *parts[];
+} filter;
+
 typedef struct bloom {
-	double error;
-	uint32_t numfilters;
-	uint8_t **contents;
+	double e;
+	int numfilters;
+	filter *first;
 } bloom;
 
 bloom *bloomNew(void);
