@@ -145,7 +145,7 @@ bloom *bloomNew(void) {
 	bloom *bf = zmalloc(sizeof(bloom));
 	bf->numfilters = 0;
     bf->e = DEFAULT_ERROR;
-    bf->first = bloomFilterNew(bf);
+    bf->first = NULL; /* do not create filter here, because user might change error */
 	return bf;
 }
 
@@ -162,14 +162,18 @@ void bloomRelease(bloom *bf) {
 void bloomAdd(bloom *bf, unsigned char *ele, size_t elesize) {
     /* Go to the last filter, which is the current one */
     filter *flt = bf->first;
-    while (flt->next)
-        flt = flt->next;
+    if (!flt)
+        flt = bf->first = bloomFilterNew(bf);
+    else {
+        while (flt->next)
+            flt = flt->next;
 
-    /* Check if this bloom filter is full; if so, allocate
-     * a new one */
-    if (bloomFilterFillRatio(flt) >= DESIRED_FILL_RATIO) {
-        flt->next = bloomFilterNew(bf);
-        flt = flt->next;
+        /* Check if this bloom filter is full; if so, allocate
+         * a new one */
+        if (bloomFilterFillRatio(flt) >= DESIRED_FILL_RATIO) {
+            flt->next = bloomFilterNew(bf);
+            flt = flt->next;
+        }
     }
 
     /* Add the element to the filter */
