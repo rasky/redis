@@ -72,8 +72,8 @@ start_server {tags {"hll"}} {
             }
 
             set realerror [expr {double($errors) / double($total)}]
-            assert {$realerror > ($error/4.0)}
-            assert {$realerror < ($error*4.0)}
+            assert {$realerror > ($error/5.0)}
+            assert {$realerror < ($error*5.0)}
         }
     }
 }
