@@ -90,9 +90,6 @@ void bloomFilterRelease(filter *flt) {
 // TODO: move to .h
 uint64_t MurmurHash64A (const void * key, int len, unsigned int seed);
 
-
-typedef uint64_t filterIndexIter;
-
 uint32_t bloomFilterCalcIndex(filter *flt, uint64_t hash, int nidx) {
     /* To compute multiple hash functions from a single hash,
      * we use the algorithm described here:
@@ -122,6 +119,7 @@ void bloomFilterAdd(filter *flt, unsigned char *ele, size_t elesize) {
     for (unsigned int i=0;i<flt->k;i++) {
         /* Calculate and turn on bit for each partition */
         uint32_t index = bloomFilterCalcIndex(flt, hash, i);
+        serverAssert(index < flt->m);
         flt->parts[i][index>>3] |= 1 << (index&7);
     }
     flt->c++;
@@ -130,6 +128,18 @@ void bloomFilterAdd(filter *flt, unsigned char *ele, size_t elesize) {
 double bloomFilterFillRatio(filter *flt) {
     return 1.0 - exp(-(double)flt->c / (double)FILTER_CALC_S(flt));
 }
+
+int bloomFilterExist(filter *flt, uint64_t hash) {
+    /* For each bit, if it's not set, early exit immediately */
+    for (unsigned int i=0;i<flt->k;i++) {
+        uint32_t index = bloomFilterCalcIndex(flt, hash, i);
+        serverAssert(index < flt->m);
+        if (~(flt->parts[i][index>>3] >> (index & 7)) & 1)
+            return 0;
+    }
+    return 1;
+}
+
 
 bloom *bloomNew(void) {
 	bloom *bf = zmalloc(sizeof(bloom));
@@ -165,6 +175,20 @@ void bloomAdd(bloom *bf, unsigned char *ele, size_t elesize) {
     /* Add the element to the filter */
     bloomFilterAdd(flt, ele, elesize);
 }
+
+int bloomExist(bloom *bf, unsigned char *ele, size_t elesize) {
+    /* Calculate initial hash for the element */
+    uint64_t hash = bloomFilterHash(ele,elesize);
+
+    /* Check all bloom filters for membership. If the element is
+       found in any of them, it means it's present. */
+    for (filter *flt = bf->first; flt; flt = flt->next)
+        if (bloomFilterExist(flt,hash))
+            return 1;
+    return 0;
+}
+
+/* ------------ Commands -------------------------- */
 
 /* BFADD var [ERROR x] ELEMENTS ele ele .... ele => TODO */
 void bfaddCommand(client *c) {
@@ -223,3 +247,63 @@ void bfaddCommand(client *c) {
     }
     addReply(c, updated ? shared.cone : shared.czero);
 }
+
+void bfexistCommand(client *c) {
+    robj *o = lookupKeyWrite(c->db,c->argv[1]);
+    if (o == NULL) {
+        /* No bloom filter, treat as empty */
+        addReply(c,shared.czero);
+        return;
+    } else if (checkType(c,o,OBJ_BLOOM))
+        return;
+
+    bloom *bf = (bloom*)o->ptr;
+    int exist = bloomExist(bf,c->argv[2]->ptr,sdslen(c->argv[2]->ptr));
+    addReply(c, exist ? shared.cone : shared.czero);
+}
+
+/* BFDEBUG <subcommand> <key> ... args ...
+ * Various debugging functions about the bloom filters */
+void bfdebugCommand(client *c) {
+    char *cmd = c->argv[1]->ptr;
+    robj *o = lookupKeyWrite(c->db,c->argv[2]);
+    if (o == NULL) {
+        addReplyError(c,"The specified key does not exist");
+        return;
+    } else if (checkType(c,o,OBJ_BLOOM))
+        return;
+    bloom *bf = (bloom*)o->ptr;
+
+    /* BFDEBUG NUMFILTERS <key> */
+    if (!strcasecmp(cmd, "numfilters")) {
+        if (c->argc != 3) goto arityerr;
+        addReplyLongLong(c,bf->numfilters);
+
+    /* BFDEBUG FILTER <key> <index> */
+    } else if (!strcasecmp(cmd, "filter")) {
+        long idx;
+        if (c->argc != 4) goto arityerr;
+        if (getLongFromObjectOrReply(c,c->argv[3],&idx,"invalid filter index") != 0) return;
+        if (idx < 0) {
+            addReplyError(c,"index out of range");
+            return;
+        }
+        filter *flt = bf->first;
+        for (;idx>0;idx--) {
+            flt = flt->next;
+            if (!flt) {
+                addReplyError(c,"index out of range");
+                return;
+            }
+        }
+
+    /* invalid command */
+    } else
+        addReplyErrorFormat(c,"Unknown BFDEBUG subcommand '%s'", cmd);
+    return;
+
+arityerr:
+    addReplyErrorFormat(c,
+        "Wrong number of arguments for the '%s' subcommand",cmd);
+}
+
