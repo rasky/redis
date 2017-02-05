@@ -81,10 +81,13 @@
  *        m[i] = n[i] / ((log(P) * log(1-P)) / abs(log(e[i])))
  * S = size of each partition, in bits
  *        s[i] = m[i] / k[i]
+ * C = number of elements that can be added before reaching the fill ratio
+ *        c[i] = s[i] * log(1 / (1-P))
+ *
  */
 
-/* Calculate S for the current filter (we do not store it) */
-#define FILTER_CALC_S(flt)  (flt->m / flt->k)
+/* Calculate M for the current filter (we do not store it) */
+#define FILTER_CALC_M(flt)  (flt->s * flt->k)
 
 /* Calculate current fill ratio for the current filter */
 #define FILTER_FILLRATIO(flt)  (1.0 - exp(-(double)flt->c / (double)FILTER_CALC_S(flt)))
@@ -106,15 +109,17 @@ filter* bloomFilterNew(bloom *bf) {
     /* Compute derived parameters */
     int k = ceil(log2(1.0 / e));
     uint64_t m = (double)n / ((log(CONFIG_BLOOM_DESIREDFILLRATIO) * log(1-CONFIG_BLOOM_DESIREDFILLRATIO)) / fabs(log(e)));
+    int c = floor((m / k) * log(1.0 / (1.0 - CONFIG_BLOOM_DESIREDFILLRATIO)));
+    uint64_t s = m / k;
 
     filter *flt = zmalloc(sizeof(filter) + k*sizeof(void*));
     flt->next = NULL;
     flt->encoding = 0;
-    flt->m = m;
+    flt->s = s;
     flt->k = k;
-    flt->c = 0;
+    flt->c = c;
     for (int i=0;i<k;i++) {
-        uint32_t bsize = (FILTER_CALC_S(flt) + 7) / 8;
+        uint32_t bsize = (flt->s + 7) / 8;
         flt->parts[i] = zmalloc(bsize);
         memset(flt->parts[i],0,bsize);
     }
@@ -145,8 +150,7 @@ uint32_t bloomFilterCalcIndex(filter *flt, uint64_t hash, int nidx) {
 
     /* Use fast unbiased modulo reduction, instead of "% size".
      * See http://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/ */
-    uint64_t size = FILTER_CALC_S(flt);
-    return (idx * size) >> 32;
+    return (idx * flt->s) >> 32;
 }
 
 uint64_t bloomFilterHash(unsigned char *ele, size_t elesize) {
@@ -160,17 +164,17 @@ void bloomFilterAdd(filter *flt, unsigned char *ele, size_t elesize) {
     for (unsigned int i=0;i<flt->k;i++) {
         /* Calculate and turn on bit for each partition */
         uint32_t index = bloomFilterCalcIndex(flt, hash, i);
-        serverAssert(index < flt->m);
+        serverAssert(index < flt->s);
         flt->parts[i][index>>3] |= 1 << (index&7);
     }
-    flt->c++;
+    flt->c--;
 }
 
 int bloomFilterExist(filter *flt, uint64_t hash) {
     /* For each bit, if it's not set, early exit immediately */
     for (unsigned int i=0;i<flt->k;i++) {
         uint32_t index = bloomFilterCalcIndex(flt, hash, i);
-        serverAssert(index < flt->m);
+        serverAssert(index < flt->s);
         if (~(flt->parts[i][index>>3] >> (index & 7)) & 1)
             return 0;
     }
@@ -207,7 +211,7 @@ void bloomAdd(bloom *bf, unsigned char *ele, size_t elesize) {
 
         /* Check if this bloom filter is full; if so, allocate
          * a new one */
-        if (FILTER_FILLRATIO(flt) >= CONFIG_BLOOM_DESIREDFILLRATIO) {
+        if (flt->c == 0) {
             flt->next = bloomFilterNew(bf);
             flt = flt->next;
         }
@@ -342,7 +346,7 @@ void bfdebugCommand(client *c) {
         }
 
         sds result = sdsempty();
-        result = sdscatprintf(result,"k:%u m:%llu c:%u", flt->k, flt->m, flt->c);
+        result = sdscatprintf(result,"k:%u s:%llu c:%u", flt->k, flt->s, flt->c);
         addReplyBulkCBuffer(c,result,sdslen(result));
         sdsfree(result);
 
