@@ -69,9 +69,9 @@ filter* bloomFilterNew(bloom *bf) {
     filter *flt = zmalloc(sizeof(filter) + k*sizeof(void*));
     flt->next = NULL;
     flt->encoding = 0;
+    flt->m = m;
     flt->k = k;
     flt->c = 0;
-    flt->m = m;
     for (int i=0;i<k;i++) {
         uint32_t bsize = (FILTER_CALC_S(flt) + 7) / 8;
         flt->parts[i] = zmalloc(bsize);
@@ -274,10 +274,13 @@ void bfdebugCommand(client *c) {
         return;
     bloom *bf = (bloom*)o->ptr;
 
-    /* BFDEBUG NUMFILTERS <key> */
-    if (!strcasecmp(cmd, "numfilters")) {
+    /* BFDEBUG STATUS <key> */
+    if (!strcasecmp(cmd, "status")) {
         if (c->argc != 3) goto arityerr;
-        addReplyLongLong(c,bf->numfilters);
+        sds result = sdsempty();
+        result = sdscatprintf(result,"n:%d e:%g", bf->numfilters, bf->e);
+        addReplyBulkCBuffer(c,result,sdslen(result));
+        sdsfree(result);
 
     /* BFDEBUG FILTER <key> <index> */
     } else if (!strcasecmp(cmd, "filter")) {
@@ -296,6 +299,11 @@ void bfdebugCommand(client *c) {
                 return;
             }
         }
+
+        sds result = sdsempty();
+        result = sdscatprintf(result,"k:%u m:%llu c:%u", flt->k, flt->m, flt->c);
+        addReplyBulkCBuffer(c,result,sdslen(result));
+        sdsfree(result);
 
     /* invalid command */
     } else
