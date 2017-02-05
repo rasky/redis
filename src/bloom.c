@@ -32,7 +32,7 @@
 #include "server.h"
 #include <math.h>
 
-#define BLOOM_BASE_SIZE 1024
+#define BLOOM_BASE_SIZE 2048    // Desired initial size of bloom filter in bytes
 #define DEFAULT_ERROR 0.003     // TODO
 #define MIN_ERROR 0.0000000001  // TODO
 #define DESIRED_FILL_RATIO 0.5
@@ -61,8 +61,18 @@
 
 filter* bloomFilterNew(bloom *bf) {
     int idx = bf->numfilters;
-    double e = bf->e * pow(TIGHTENING_RATIO, idx);
-    uint32_t n = BLOOM_BASE_SIZE * pow(ITEMGROW_RATIO, idx);
+
+    /* Compute N0 (N for the first filter) so that the first M (memory size)
+     * will match BLOOM_BASE_SIZE. */
+    uint32_t n0 = BLOOM_BASE_SIZE*8 * ((log(DESIRED_FILL_RATIO) * log(1-DESIRED_FILL_RATIO)) / fabs(log(bf->e)));
+    double e0 = bf->e;
+
+    /* Compute input parameters for this filter, iterating expontentially
+     * given the configured rations. */
+    uint32_t n = n0 * pow(ITEMGROW_RATIO, idx);
+    double e = e0 * pow(TIGHTENING_RATIO, idx);
+
+    /* Compute derived parameters */
     int k = ceil(log2(1.0 / e));
     uint64_t m = (double)n / ((log(DESIRED_FILL_RATIO) * log(1-DESIRED_FILL_RATIO)) / fabs(log(e)));
 
