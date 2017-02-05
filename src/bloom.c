@@ -49,7 +49,7 @@
  *     first filter?
  *        N = 128
  * K = number of hash functions
- *        k = log2(e^-1)
+ *        k = ceil(log2(e^-1))
  * M = best size in bits for the filter for the given parameters
  *        m = n / ((log(p) * log(1-p)) / abs(log(e)))
  * S = size of each partition, in bits
