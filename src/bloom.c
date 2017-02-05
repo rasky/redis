@@ -32,31 +32,62 @@
 #include "server.h"
 #include <math.h>
 
-#define BLOOM_BASE_SIZE 2048    // Desired initial size of bloom filter in bytes
-#define DEFAULT_ERROR 0.003     // TODO
+/* Initial desired size of the bloom filter (in bytes). */
+#define CONFIG_BLOOM_BASESIZE 2048
+
+/* Default false-positive error rate */
+#define CONFIG_BLOOM_DEFAULTERROR 0.003
+
+/* Fill ratio of a filter before it is considered full. We also call this P */
+#define CONFIG_BLOOM_DESIREDFILLRATIO 0.5
+
+/* Desired growth for items, for each new allocated filter.
+ * Default is 2.0, which means that each new filter should hold
+ * twice as many items as the previous one. */
+#define CONFIG_BLOOM_ITEMGROWRATIO    2.0
+
+/* Desired tightening ratio for false-positive error.
+ * Each new filter must have a tighten error ratio compared to
+ * the previous one, to asymptotically approach the user-requested
+ * ratio. */
+#define CONFIG_BLOOM_TIGHTENINGRATIO  0.85
+
 #define MIN_ERROR 0.0000000001  // TODO
-#define DESIRED_FILL_RATIO 0.5
-#define ITEMGROW_RATIO    2.0
-#define TIGHTENING_RATIO  0.85
 
 /*
- * Bloom parameters:
+ * Bloom user-provided parameters:
  *
- * E = false probability ratio (user-provided)
- * P = desired fill ratio
- *        p = 0.5
- * N = how many number of items do we want to store in the
- *     first filter?
- *        N = 128
- * K = number of hash functions
- *        k = ceil(log2(e^-1))
- * M = best size in bits for the filter for the given parameters
- *        m = n / ((log(p) * log(1-p)) / abs(log(e)))
+ * E = false probability ratio. This is used directly on the first filter
+ *     and subsequente filters are computed so that the composed ratio
+ *     does not diverge. We compute the following sequence:
+ *
+ *     e0 = E
+ *     e[i] = e0 * CONFIG_BLOOM_TIGHTENINGRATIO^i
+ *
+ *
+ * N = number of items that we want to store in each filter. This is
+ *     a sequence of numbers (one for each filter), that is computed
+ *     given the requested initial size in bytes, and the item growth ratio
+ *
+ *     n0 = CONFIG_BLOOM_BASESIZE*8 * (log(P)*log(1-P) / abs(log(e0)))
+ *     n[i] = n0 * CONFIG_BLOOM_ITEMGROWRATIO^i
+ *
+ *
+ * Parameters computed for each filter:
+ *
+ * K = number of partitions (aka hash functions)
+ *        k[i] = ceil(log2(e[i]^-1))
+ * M = size in bits of the filter
+ *        m[i] = n[i] / ((log(P) * log(1-P)) / abs(log(e[i])))
  * S = size of each partition, in bits
- *        s = m / k
+ *        s[i] = m[i] / k[i]
  */
 
+/* Calculate S for the current filter (we do not store it) */
 #define FILTER_CALC_S(flt)  (flt->m / flt->k)
+
+/* Calculate current fill ratio for the current filter */
+#define FILTER_FILLRATIO(flt)  (1.0 - exp(-(double)flt->c / (double)FILTER_CALC_S(flt)))
 
 
 filter* bloomFilterNew(bloom *bf) {
@@ -64,17 +95,17 @@ filter* bloomFilterNew(bloom *bf) {
 
     /* Compute N0 (N for the first filter) so that the first M (memory size)
      * will match BLOOM_BASE_SIZE. */
-    uint32_t n0 = BLOOM_BASE_SIZE*8 * ((log(DESIRED_FILL_RATIO) * log(1-DESIRED_FILL_RATIO)) / fabs(log(bf->e)));
+    uint32_t n0 = CONFIG_BLOOM_BASESIZE*8 * ((log(CONFIG_BLOOM_DESIREDFILLRATIO) * log(1-CONFIG_BLOOM_DESIREDFILLRATIO)) / fabs(log(bf->e)));
     double e0 = bf->e;
 
     /* Compute input parameters for this filter, iterating expontentially
      * given the configured rations. */
-    uint32_t n = n0 * pow(ITEMGROW_RATIO, idx);
-    double e = e0 * pow(TIGHTENING_RATIO, idx);
+    uint32_t n = n0 * pow(CONFIG_BLOOM_ITEMGROWRATIO, idx);
+    double e = e0 * pow(CONFIG_BLOOM_TIGHTENINGRATIO, idx);
 
     /* Compute derived parameters */
     int k = ceil(log2(1.0 / e));
-    uint64_t m = (double)n / ((log(DESIRED_FILL_RATIO) * log(1-DESIRED_FILL_RATIO)) / fabs(log(e)));
+    uint64_t m = (double)n / ((log(CONFIG_BLOOM_DESIREDFILLRATIO) * log(1-CONFIG_BLOOM_DESIREDFILLRATIO)) / fabs(log(e)));
 
     filter *flt = zmalloc(sizeof(filter) + k*sizeof(void*));
     flt->next = NULL;
@@ -135,10 +166,6 @@ void bloomFilterAdd(filter *flt, unsigned char *ele, size_t elesize) {
     flt->c++;
 }
 
-double bloomFilterFillRatio(filter *flt) {
-    return 1.0 - exp(-(double)flt->c / (double)FILTER_CALC_S(flt));
-}
-
 int bloomFilterExist(filter *flt, uint64_t hash) {
     /* For each bit, if it's not set, early exit immediately */
     for (unsigned int i=0;i<flt->k;i++) {
@@ -154,7 +181,7 @@ int bloomFilterExist(filter *flt, uint64_t hash) {
 bloom *bloomNew(void) {
 	bloom *bf = zmalloc(sizeof(bloom));
 	bf->numfilters = 0;
-    bf->e = DEFAULT_ERROR;
+    bf->e = CONFIG_BLOOM_DEFAULTERROR;
     bf->first = NULL; /* do not create filter here, because user might change error */
 	return bf;
 }
@@ -180,7 +207,7 @@ void bloomAdd(bloom *bf, unsigned char *ele, size_t elesize) {
 
         /* Check if this bloom filter is full; if so, allocate
          * a new one */
-        if (bloomFilterFillRatio(flt) >= DESIRED_FILL_RATIO) {
+        if (FILTER_FILLRATIO(flt) >= CONFIG_BLOOM_DESIREDFILLRATIO) {
             flt->next = bloomFilterNew(bf);
             flt = flt->next;
         }
