@@ -36,9 +36,9 @@
 typedef struct filter {
     struct filter *next;  /* next filter in chain */
     uint64_t encoding;    /* encoding bitset: 1 bit per partition */
+    uint64_t m;           /* size of each partition in bits */
     uint32_t k;           /* number of partitions */
     uint32_t c;           /* number of items in this filter */
-    uint32_t m;           /* size of each partition in byte */
     uint8_t *parts[];
 } filter;
 
