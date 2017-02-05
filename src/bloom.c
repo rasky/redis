@@ -205,7 +205,7 @@ void bfaddCommand(client *c) {
         /* if the bloom filter was just created, and an error was specified,
            set it overriding the default. */
         bf->e = error;
-    } else if (!updated && bf->e != error) {
+    } else if (!updated && error != 0 &&  bf->e != error) {
         addReplyError(c,"cannot change error on existing bloom filter");
         return;
     }
