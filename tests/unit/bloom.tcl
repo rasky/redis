@@ -61,15 +61,22 @@ start_server {tags {"hll"}} {
             set errors 0
             foreach {good bad} $checks {
                 set res [r bfexist bloom $good]
-                if {$res == 0} {
-                    incr errors 1
-                }
+                assert {$res == 1}
 
                 set res [r bfexist bloom $bad]
                 if {$res == 1} {
                     incr errors 1
                 }
             }
+
+            # puts "DEBUG"
+            # puts [r bfdebug status bloom]
+            # puts [r bfdebug filter bloom 0]
+            # puts [r bfdebug filter bloom 1]
+            # puts [r bfdebug filter bloom 2]
+            # puts [r bfdebug filter bloom 3]
+            # puts [r bfdebug filter bloom 4]
+            # puts [r bfdebug filter bloom 5]
 
             set realerror [expr {double($errors) / double($total)}]
             assert {$realerror > ($error/5.0)}
