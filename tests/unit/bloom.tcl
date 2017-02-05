@@ -36,6 +36,46 @@ start_server {tags {"hll"}} {
         lappend res [r bfexist bloom m]
         lappend res [r bfexist bloom n]
         lappend res [r bfexist bloom o]
+        lappend res [r bfexist bloom z]
         set res
-    } {1 1 1 1 1 1 1 1}
+    } {1 1 1 1 1 1 1 1 0}
+
+    test {Bloom testing different error rate} {
+
+    	foreach error {0.1 0.01 0.001} {
+	        r del bloom
+	        r bfadd bloom error $error
+
+	        set n 0
+	        set checks {}
+	        while {$n < 100000} {
+	            set elements {}
+	            for {set j 0} {$j < 100} {incr j} {lappend elements [expr rand()]}
+	            lappend checks [lindex $elements 0]
+	            lappend checks [expr rand()]
+	            incr n 100
+	            r bfadd bloom elements {*}$elements
+	        }
+
+	        set total [llength $checks]
+	        set errors 0
+	        foreach {good bad} $checks {
+	        	set res [r bfexist bloom $good]
+	        	if {$res == 0} {
+	        		incr errors 1
+	        	}
+
+	        	set res [r bfexist bloom $bad]
+	        	if {$res == 1} {
+	        		incr errors 1
+	        	}
+	        }
+
+	        set realerror [expr {double($errors) / double($total)}]
+	        assert {$realerror > ($error/4.0)}
+	        assert {$realerror < ($error*4.0)}
+    	}
+    }
 }
+
+
