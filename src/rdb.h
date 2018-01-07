@@ -78,7 +78,7 @@
 #define RDB_TYPE_HASH   4
 #define RDB_TYPE_ZSET_2 5 /* ZSET version 2 with doubles stored in binary. */
 #define RDB_TYPE_MODULE 6
-#define RDB_TYPE_BLOOM  7 // TODO: must add here or below?
+#define RDB_TYPE_BLOOM  7
 /* NOTE: WHEN ADDING NEW RDB TYPE, UPDATE rdbIsObjectType() BELOW */
 
 /* Object types for encoded objects. */
