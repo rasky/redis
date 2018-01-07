@@ -299,7 +299,7 @@ struct redisCommand redisCommandTable[] = {
     {"pfmerge",pfmergeCommand,-2,"wm",0,NULL,1,-1,1,0,0},
     {"pfdebug",pfdebugCommand,-3,"w",0,NULL,0,0,0,0,0},
     {"bfadd",bfaddCommand,-2,"wmF",0,NULL,1,1,1,0,0},
-    {"bfexist",bfexistCommand,-1,"r",0,NULL,1,1,1,0,0},
+    {"bfexist",bfexistCommand,-1,"rF",0,NULL,1,1,1,0,0},
     {"bfdebug",bfdebugCommand,-3,"w",0,NULL,0,0,0,0,0},
     {"post",securityWarningCommand,-1,"lt",0,NULL,0,0,0,0,0},
     {"host:",securityWarningCommand,-1,"lt",0,NULL,0,0,0,0,0},
