@@ -1,4 +1,4 @@
-start_server {tags {"hll"}} {
+start_server {tags {"bloom"}} {
     # test {BloomFilter self test passes} {
     #     catch {r bfselftest} e
     #     set e
