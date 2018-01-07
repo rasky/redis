@@ -782,7 +782,7 @@ ssize_t rdbSaveObject(rio *rdb, robj *o) {
         /* Save a bloom filter value */
         if (o->encoding == OBJ_ENCODING_RAW) {
             bloom *bf = (bloom*)o->ptr;
-            if (rdbSaveDoubleValue(rdb,bf->error) == -1) return -1;
+            if (rdbSaveDoubleValue(rdb,bf->e) == -1) return -1;
             if (rdbSaveLen(rdb,bf->numfilters) == -1) return -1;
             // TODO....
         } else {
