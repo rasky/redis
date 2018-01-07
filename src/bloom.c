@@ -101,7 +101,7 @@ filter* bloomFilterNew(bloom *bf) {
     uint32_t n0 = CONFIG_BLOOM_BASESIZE*8 * ((log(CONFIG_BLOOM_DESIREDFILLRATIO) * log(1-CONFIG_BLOOM_DESIREDFILLRATIO)) / fabs(log(bf->e)));
     double e0 = bf->e;
 
-    /* Compute input parameters for this filter, iterating expontentially
+    /* Compute input parameters for this filter, iterating exponentially
      * given the configured rations. */
     uint32_t n = n0 * pow(CONFIG_BLOOM_ITEMGROWRATIO, idx);
     double e = e0 * pow(CONFIG_BLOOM_TIGHTENINGRATIO, idx);
@@ -136,51 +136,53 @@ void bloomFilterRelease(filter *flt) {
 // TODO: move to .h
 uint64_t MurmurHash64A (const void * key, int len, unsigned int seed);
 
-uint32_t bloomFilterCalcIndex(filter *flt, uint64_t hash, int nidx) {
-    /* To compute multiple hash functions from a single hash,
-     * we use the algorithm described here:
-     * http://www.eecs.harvard.edu/~michaelm/postscripts/rsa2008.pdf
-     *
-     * WHich is easier done than said: we split the hash in two
-     * 32-bit parts (A and B), and then H(i) = A + B*i
-     */
-    uint32_t a = (uint32_t)hash;
-    uint32_t b = (uint32_t)(hash>>32);
-    uint64_t idx = a + b*nidx;
-
-    /* Use fast unbiased modulo reduction, instead of "% size".
-     * See http://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/ */
-    return (idx * flt->s) >> 32;
-}
-
 uint64_t bloomFilterHash(unsigned char *ele, size_t elesize) {
     return MurmurHash64A(ele,elesize,0xc5fb9af2ULL);
 }
 
 void bloomFilterAdd(filter *flt, unsigned char *ele, size_t elesize) {
-    /* Calculate initial hash for the element */
+    /* Calculate initial hash for the element. Since 32-bit index is enough,
+       we use a 64-bit hash as two 32-bit hashes. */
     uint64_t hash = bloomFilterHash(ele,elesize);
+    uint32_t a = (uint32_t)hash;
+    uint32_t b = (uint32_t)(hash>>32);
 
     for (unsigned int i=0;i<flt->k;i++) {
-        /* Calculate and turn on bit for each partition */
-        uint32_t index = bloomFilterCalcIndex(flt, hash, i);
+        /* To compute multiple hash functions from two hashes,
+         * we use the algorithm described here:
+         * http://www.eecs.harvard.edu/~michaelm/postscripts/rsa2008.pdf
+         */
+        uint64_t index = a;
+        a += b; b += i;
+
+        /* Use fast unbiased modulo reduction, instead of "% size".
+         * See http://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/ */
+        index = (index * flt->s) >> 32;
         serverAssert(index < flt->s);
+
+        /* Turn on the correct bit in each partition */
         flt->parts[i][index>>3] |= 1 << (index&7);
     }
     flt->c--;
 }
 
 int bloomFilterExist(filter *flt, uint64_t hash) {
-    /* For each bit, if it's not set, early exit immediately */
+    uint32_t a = (uint32_t)hash;
+    uint32_t b = (uint32_t)(hash>>32);
+
     for (unsigned int i=0;i<flt->k;i++) {
-        uint32_t index = bloomFilterCalcIndex(flt, hash, i);
+        /* See bloomFilterAdd for a description of the index calculation algorithm. */
+        uint64_t index = a;
+        a += b; b += i;
+        index = (index * flt->s) >> 32;
         serverAssert(index < flt->s);
+
+        /* For each bit, if it's not set, early exit immediately */
         if (~(flt->parts[i][index>>3] >> (index & 7)) & 1)
             return 0;
     }
     return 1;
 }
-
 
 bloom *bloomNew(void) {
 	bloom *bf = zmalloc(sizeof(bloom));
