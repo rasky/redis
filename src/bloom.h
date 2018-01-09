@@ -37,8 +37,9 @@ typedef struct filter {
     struct filter *next;  /* next filter in chain */
     uint64_t encoding;    /* encoding bitset: 1 bit per partition */
     uint64_t s;           /* size of each partition in bits */
+    uint64_t b;           /* number of bits set in this filter */
+    uint64_t bmax;        /* maximum number of bits that should be set */
     uint32_t k;           /* number of partitions */
-    uint32_t c;           /* number of items that can still be added before saturation */
     uint8_t *parts[];
 } filter;
 

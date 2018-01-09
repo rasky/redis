@@ -99,25 +99,28 @@ filter* bloomFilterNew(bloom *bf) {
     /* Compute N0 (N for the first filter) so that the first M (memory size)
      * will match BLOOM_BASE_SIZE. */
     uint32_t n0 = CONFIG_BLOOM_BASESIZE*8 * ((log(CONFIG_BLOOM_DESIREDFILLRATIO) * log(1-CONFIG_BLOOM_DESIREDFILLRATIO)) / fabs(log(bf->e)));
-    double e0 = bf->e;
 
-    /* Compute input parameters for this filter, iterating exponentially
-     * given the configured rations. */
+    /* Compute E0 (E for the first filter) so that the composed probability converges to E. */
+    double e0 = bf->e * (1 - CONFIG_BLOOM_TIGHTENINGRATIO) * 2;
+
+    /* Compute input parameters for the new filter, iterating exponentially
+     * given the configured ratios. */
     uint32_t n = n0 * pow(CONFIG_BLOOM_ITEMGROWRATIO, idx);
     double e = e0 * pow(CONFIG_BLOOM_TIGHTENINGRATIO, idx);
 
     /* Compute derived parameters */
-    int k = ceil(log2(1.0 / e));
+    int k = ceil(-log2(e));
     uint64_t m = (double)n / ((log(CONFIG_BLOOM_DESIREDFILLRATIO) * log(1-CONFIG_BLOOM_DESIREDFILLRATIO)) / fabs(log(e)));
-    int c = floor((m / k) * log(1.0 / (1.0 - CONFIG_BLOOM_DESIREDFILLRATIO)));
     uint64_t s = m / k;
+    uint64_t bmax = (s*k) * CONFIG_BLOOM_DESIREDFILLRATIO;
 
     filter *flt = zmalloc(sizeof(filter) + k*sizeof(void*));
     flt->next = NULL;
     flt->encoding = 0;
     flt->s = s;
     flt->k = k;
-    flt->c = c;
+    flt->b = 0;
+    flt->bmax = bmax;
     for (int i=0;i<k;i++) {
         uint32_t bsize = (flt->s + 7) / 8;
         flt->parts[i] = zmalloc(bsize);
@@ -140,12 +143,13 @@ uint64_t bloomFilterHash(unsigned char *ele, size_t elesize) {
     return MurmurHash64A(ele,elesize,0xc5fb9af2ULL);
 }
 
-void bloomFilterAdd(filter *flt, unsigned char *ele, size_t elesize) {
+int bloomFilterAdd(filter *flt, unsigned char *ele, size_t elesize) {
     /* Calculate initial hash for the element. Since 32-bit index is enough,
        we use a 64-bit hash as two 32-bit hashes. */
     uint64_t hash = bloomFilterHash(ele,elesize);
     uint32_t a = (uint32_t)hash;
     uint32_t b = (uint32_t)(hash>>32);
+    int nbits = 0;
 
     for (unsigned int i=0;i<flt->k;i++) {
         /* To compute multiple hash functions from two hashes,
@@ -158,12 +162,17 @@ void bloomFilterAdd(filter *flt, unsigned char *ele, size_t elesize) {
         /* Use fast unbiased modulo reduction, instead of "% size".
          * See http://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/ */
         index = (index * flt->s) >> 32;
-        serverAssert(index < flt->s);
 
         /* Turn on the correct bit in each partition */
+        nbits += (flt->parts[i][index>>3] & (1 << (index&7))) ? 0 : 1;
         flt->parts[i][index>>3] |= 1 << (index&7);
     }
-    flt->c--;
+
+    /* Keep count of total bits set to 1 */
+    flt->b += nbits;
+
+    /* If at least one bit was turned off, we consider the item really added. */
+    return nbits > 0;
 }
 
 int bloomFilterExist(filter *flt, uint64_t hash) {
@@ -175,7 +184,6 @@ int bloomFilterExist(filter *flt, uint64_t hash) {
         uint64_t index = a;
         a += b; b += i;
         index = (index * flt->s) >> 32;
-        serverAssert(index < flt->s);
 
         /* For each bit, if it's not set, early exit immediately */
         if (~(flt->parts[i][index>>3] >> (index & 7)) & 1)
@@ -202,7 +210,7 @@ void bloomRelease(bloom *bf) {
     zfree(bf);
 }
 
-void bloomAdd(bloom *bf, unsigned char *ele, size_t elesize) {
+int bloomAdd(bloom *bf, unsigned char *ele, size_t elesize) {
     /* Go to the last filter, which is the current one */
     filter *flt = bf->first;
     if (!flt)
@@ -213,14 +221,14 @@ void bloomAdd(bloom *bf, unsigned char *ele, size_t elesize) {
 
         /* Check if this bloom filter is full; if so, allocate
          * a new one */
-        if (flt->c == 0) {
+        if (flt->b >= flt->bmax) {
             flt->next = bloomFilterNew(bf);
             flt = flt->next;
         }
     }
 
     /* Add the element to the filter */
-    bloomFilterAdd(flt, ele, elesize);
+    return bloomFilterAdd(flt, ele, elesize);
 }
 
 int bloomExist(bloom *bf, unsigned char *ele, size_t elesize) {
@@ -235,9 +243,20 @@ int bloomExist(bloom *bf, unsigned char *ele, size_t elesize) {
     return 0;
 }
 
+int bloomCard(bloom *bf) {
+    int nelem = 0;
+
+    /* Sum cardinality estimation of each filter. */
+    for (filter *flt = bf->first; flt; flt = flt->next) {
+        double p = ((double)flt->b / (double)flt->bmax) * CONFIG_BLOOM_DESIREDFILLRATIO;
+        nelem += floor((double)flt->s * -log(1.0-p) + .5);
+    }
+    return nelem;
+}
+
 /* ------------ Commands -------------------------- */
 
-/* BFADD var [ERROR x] ELEMENTS ele ele .... ele => TODO */
+/* BFADD var [ERROR x] ELEMENTS ele ele .... ele => nadded */
 void bfaddCommand(client *c) {
     int j=2; double error=0;
     while (j<c->argc) {
@@ -281,8 +300,9 @@ void bfaddCommand(client *c) {
         return;
     }
 
+    int nadded = 0;
     for (;j<c->argc;j++) {
-        bloomAdd(bf,c->argv[j]->ptr,sdslen(c->argv[j]->ptr));
+        nadded += bloomAdd(bf,c->argv[j]->ptr,sdslen(c->argv[j]->ptr));
         updated++;
     }
 
@@ -292,9 +312,10 @@ void bfaddCommand(client *c) {
         server.dirty++;
         //FIXME cache here HLL_INVALIDATE_CACHE(hdr);
     }
-    addReply(c, updated ? shared.cone : shared.czero);
+    addReplyLongLong(c, nadded);
 }
 
+/* BFEXIST key elem -> 0/1 */
 void bfexistCommand(client *c) {
     robj *o = lookupKeyWrite(c->db,c->argv[1]);
     if (o == NULL) {
@@ -307,6 +328,21 @@ void bfexistCommand(client *c) {
     bloom *bf = (bloom*)o->ptr;
     int exist = bloomExist(bf,c->argv[2]->ptr,sdslen(c->argv[2]->ptr));
     addReply(c, exist ? shared.cone : shared.czero);
+}
+
+/* BFCOUNT key -> nelem */
+void bfcountCommand(client *c) {
+    robj *o = lookupKeyWrite(c->db,c->argv[1]);
+    if (o == NULL) {
+        /* No bloom filter, treat as empty */
+        addReply(c,shared.czero);
+        return;
+    } else if (checkType(c,o,OBJ_BLOOM))
+        return;
+
+    bloom *bf = (bloom*)o->ptr;
+    int ncard = bloomCard(bf);
+    addReplyLongLong(c, ncard);
 }
 
 /* BFDEBUG <subcommand> <key> ... args ...
@@ -348,7 +384,7 @@ void bfdebugCommand(client *c) {
         }
 
         sds result = sdsempty();
-        result = sdscatprintf(result,"k:%u s:%llu c:%u", flt->k, flt->s, flt->c);
+        result = sdscatprintf(result,"k:%u s:%llu b:%llu", flt->k, flt->s, flt->b);
         addReplyBulkCBuffer(c,result,sdslen(result));
         sdsfree(result);
 

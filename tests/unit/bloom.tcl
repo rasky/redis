@@ -40,6 +40,31 @@ start_server {tags {"bloom"}} {
         set res
     } {1 1 1 1 1 1 1 1 0}
 
+    test {Bloom adding elements return check} {
+        r del bloom
+        set res {}
+        lappend res [r bfadd bloom elements a b c d a]
+        lappend res [r bfadd bloom elements a b e f c]
+        lappend res [r bfadd bloom elements z z z z z]
+        lappend res [r bfadd bloom elements a c z e c]
+        lappend res [r bfadd bloom elements k a a a a]
+        set res
+    } {4 2 1 0 1}
+
+    test {Bloom cardinality} {
+        set res {}
+        r del bloom
+        r bfadd bloom elements a b c d e
+        lappend res [r bfcount bloom]
+        r bfadd bloom elements f g h i j
+        lappend res [r bfcount bloom]
+        r bfadd bloom elements k l m n o
+        lappend res [r bfcount bloom]
+        r bfadd bloom elements a g h z k
+        lappend res [r bfcount bloom]
+        set res
+    } {5 10 15 16}
+
     test {Bloom testing different error rate} {
 
         foreach error {0.1 0.01 0.001} {
@@ -48,13 +73,16 @@ start_server {tags {"bloom"}} {
 
             set n 0
             set checks {}
-            while {$n < 100000} {
+            while {$n < 500000} {
                 set elements {}
                 for {set j 0} {$j < 100} {incr j} {lappend elements [expr rand()]}
                 lappend checks [lindex $elements 0]
                 lappend checks [expr rand()]
                 incr n 100
                 r bfadd bloom elements {*}$elements
+
+                set card [r bfcount bloom]
+                assert {abs($card - $n) / $n < 0.005}
             }
 
             set total [llength $checks]
@@ -79,8 +107,11 @@ start_server {tags {"bloom"}} {
             # puts [r bfdebug filter bloom 5]
 
             set realerror [expr {double($errors) / double($total)}]
-            assert {$realerror > ($error/5.0)}
-            assert {$realerror < ($error*5.0)}
+            # puts $errors
+            # puts $total
+            # puts $error
+            # puts $realerror
+            assert {$realerror <= $error}
         }
     }
 }

@@ -1952,6 +1952,7 @@ void pfmergeCommand(client *c);
 void pfdebugCommand(client *c);
 void bfaddCommand(client *c);
 void bfexistCommand(client *c);
+void bfcountCommand(client *c);
 void bfdebugCommand(client *c);
 void latencyCommand(client *c);
 void moduleCommand(client *c);
